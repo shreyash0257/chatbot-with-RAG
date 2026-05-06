@@ -1,0 +1,8 @@
+PyPDF2
+streamlit
+langchain
+langchain-google-genai
+langchain-chroma
+langchain-text-splitters
+python-dotenv
+google-generativeai
