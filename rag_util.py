@@ -37,7 +37,7 @@ def create_vector_store(text):
     vectorstore = Chroma.from_texts(texts=chunks, embedding=embeddings)
     return vectorstore
 
-def get_answer(vectorstore, user_query):
+def get_answer(vectorstore, user_query, chat_history=""):
     """Searches the DB and asks Gemini for the answer."""
     # 1. Retrieve relevant text chunks
     docs = vectorstore.similarity_search(user_query)
@@ -46,16 +46,20 @@ def get_answer(vectorstore, user_query):
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
     
     # 3. Setup the prompt and chain
-    prompt_template = """Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
+    prompt_template = """Use the following pieces of context and the chat history to answer the user's question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
 
+Chat History:
+{chat_history}
+
+Context:
 {context}
 
 Question: {question}
 Helpful Answer:"""
-    prompt = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
+    prompt = PromptTemplate(template=prompt_template, input_variables=["chat_history", "context", "question"])
     chain = prompt | llm | StrOutputParser()
     
     # 4. Generate answer
     context = "\n\n".join([doc.page_content for doc in docs])
-    response = chain.invoke({"context": context, "question": user_query})
+    response = chain.invoke({"chat_history": chat_history, "context": context, "question": user_query})
     return response
