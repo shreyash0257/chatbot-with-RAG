@@ -7,6 +7,11 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGener
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+# Phase 1 imports
+import config
+from retriever import build_bm25_index, hybrid_search
+from reranker import load_reranker, rerank
+
 # Load environment variables
 load_dotenv()
 
@@ -21,7 +26,7 @@ def process_pdf(uploaded_file):
     return text
 
 def create_vector_store(text):
-    """Splits text and creates a searchable database."""
+    """Splits text and creates a searchable database, plus a BM25 index."""
     # Split text into chunks
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
     chunks = text_splitter.split_text(text)
@@ -35,12 +40,36 @@ def create_vector_store(text):
     
     # Store in Chroma (in-memory for this example)
     vectorstore = Chroma.from_texts(texts=chunks, embedding=embeddings)
-    return vectorstore
+    
+    # Phase 1: Build BM25 index
+    bm25_index = build_bm25_index(chunks)
+    
+    return vectorstore, bm25_index, chunks
 
-def get_answer(vectorstore, user_query, chat_history=""):
+def get_answer(vectorstore, bm25_index, chunks, user_query, chat_history="", 
+               use_hybrid=config.HYBRID_SEARCH_ENABLED, 
+               use_reranking=config.RERANKING_ENABLED, 
+               alpha=config.HYBRID_ALPHA):
     """Searches the DB and asks Gemini for the answer."""
     # 1. Retrieve relevant text chunks
-    docs = vectorstore.similarity_search(user_query)
+    if use_hybrid:
+        retrieved_chunks = hybrid_search(vectorstore, bm25_index, chunks, user_query, 
+                                         top_k=config.RETRIEVAL_TOP_K, alpha=alpha)
+    else:
+        docs = vectorstore.similarity_search(user_query, k=config.RETRIEVAL_TOP_K)
+        retrieved_chunks = [doc.page_content for doc in docs]
+        
+    # Phase 1: Reranking
+    source_chunks_with_scores = []
+    if use_reranking and retrieved_chunks:
+        reranker_model = load_reranker(config.RERANKER_MODEL)
+        scored_chunks = rerank(reranker_model, user_query, retrieved_chunks, top_n=config.RERANKER_TOP_N)
+        final_chunks = [chunk for chunk, score in scored_chunks]
+        source_chunks_with_scores = scored_chunks
+    else:
+        final_chunks = retrieved_chunks[:config.RERANKER_TOP_N]
+        # Just assign dummy scores if reranking is off
+        source_chunks_with_scores = [(chunk, 0.0) for chunk in final_chunks]
     
     # 2. Initialize Gemini model
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
@@ -60,6 +89,10 @@ Helpful Answer:"""
     chain = prompt | llm | StrOutputParser()
     
     # 4. Generate answer
-    context = "\n\n".join([doc.page_content for doc in docs])
+    context = "\n\n".join(final_chunks)
     response = chain.invoke({"chat_history": chat_history, "context": context, "question": user_query})
-    return response
+    
+    return {
+        "answer": response,
+        "source_chunks": source_chunks_with_scores
+    }
