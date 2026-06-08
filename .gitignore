@@ -1,19 +1,4 @@
 .env
 __pycache__/
 venv/
-.streamlit/
-chroma_db/
-questionnaire*.txt
-
-# IDEs
-.vscode/
-.idea/
-
-# OS generated files
-.DS_Store
-
-# Logs
-*.log
-
-# Uploaded documents
-*.pdf
+MD/
